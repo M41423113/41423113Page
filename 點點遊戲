@@ -1,0 +1,184 @@
+from browser import document, timer, html, window
+import random
+import time
+
+# --- 1. 遊戲參數 ---
+GAME_DURATION = 30
+score = 0
+game_active = False
+
+# --- 2. 建立容器與背景 ---
+if "brython_div1" not in document:
+    game_area = html.DIV(id="brython_div1")
+    document <= game_area
+else:
+    game_area = document["brython_div1"]
+
+game_area.style.width = "600px"
+game_area.style.height = "400px"
+game_area.style.margin = "20px auto"
+game_area.style.position = "relative"
+game_area.style.overflow = "hidden"
+game_area.style.border = "5px solid #222"
+game_area.style.backgroundColor = "#1a1a3a"
+game_area.style.backgroundImage = "radial-gradient(#222 10%, transparent 10%)"
+game_area.style.backgroundSize = "20px 20px"
+
+# --- 3. 建立 UI 元件 ---
+score_display = html.DIV("💰 分數: 0", style={
+    "position": "absolute", "top": "10px", "left": "10px", 
+    "color": "gold", "fontSize": "1.5em", "zIndex": "10", "fontWeight": "bold"
+})
+timer_display = html.DIV("⏳ 時間: 30s", style={
+    "position": "absolute", "top": "10px", "right": "10px", 
+    "color": "white", "fontSize": "1.5em", "zIndex": "10"
+})
+game_area <= score_display
+game_area <= timer_display
+
+# 改良的球體生成函式：加入 transition 特效
+def create_ball(color, size, z_index):
+    b = html.DIV(style={
+        "width": f"{size}px", "height": f"{size}px", "backgroundColor": color,
+        "position": "absolute", "borderRadius": "50%", "zIndex": z_index,
+        "cursor": "pointer", "boxShadow": f"0 0 15px {color}",
+        "transition": "transform 0.3s, opacity 0.3s", # 特效核心
+        "opacity": "1",
+        "transform": "scale(1)"
+    })
+    game_area <= b
+    return b
+
+# 建立得分目標
+target = create_ball("#f1c40f", 50, 5)   # 黃色
+blue_ball = create_ball("#3498db", 50, 6) # 藍色
+green_ball = create_ball("#2ecc71", 40, 6) # 綠色
+purple_ball = create_ball("#9b59b6", 30, 6) # 紫色
+
+# 建立紅色陷阱
+trap = html.DIV(style={
+    "width": "45px", "height": "45px", "backgroundColor": "#e74c3c",
+    "position": "absolute", "borderRadius": "10%", "zIndex": "7",
+    "boxShadow": "0 0 25px #ff0000", "border": "3px solid white",
+    "transition": "transform 0.2s"
+})
+game_area <= trap
+
+# --- 4. 運動邏輯 ---
+balls = [
+    {"el": blue_ball, "x": 100, "y": 100, "vx": 4, "vy": 4, "size": 50, "pts": 3, "active": True},
+    {"el": green_ball, "x": 200, "y": 150, "vx": -5, "vy": 5, "size": 40, "pts": 5, "active": True},
+    {"el": purple_ball, "x": 300, "y": 200, "vx": 8, "vy": -8, "size": 30, "pts": 10, "active": True}
+]
+
+def move_all_balls():
+    if not game_active: return
+    for b in balls:
+        if b["active"]: # 只有活著的球才移動
+            b["x"] += b["vx"]
+            b["y"] += b["vy"]
+            if b["x"] <= 0 or b["x"] >= (600 - b["size"]): b["vx"] *= -1
+            if b["y"] <= 0 or b["y"] >= (400 - b["size"]): b["vy"] *= -1
+            b["el"].style.left = f"{b['x']}px"
+            b["el"].style.top = f"{b['y']}px"
+    timer.set_timeout(move_all_balls, 20)
+
+# --- 5. 互動與消失特效邏輯 ---
+
+def disappear_effect(obj_data):
+    """消失動畫邏輯"""
+    obj_data["active"] = False
+    el = obj_data["el"]
+    el.style.transform = "scale(0)" # 縮小
+    el.style.opacity = "0"         # 淡出
+    
+    def respawn():
+        # 重新隨機出現
+        obj_data["x"] = random.randint(50, 500)
+        obj_data["y"] = random.randint(50, 300)
+        el.style.left = f"{obj_data['x']}px"
+        el.style.top = f"{obj_data['y']}px"
+        # 恢復顯示
+        el.style.transform = "scale(1)"
+        el.style.opacity = "1"
+        obj_data["active"] = True
+
+    timer.set_timeout(respawn, 800) # 0.8秒後重生
+
+def update_score(points):
+    global score
+    score += points
+    score_display.text = f"💰 分數: {score}"
+    if score < 0: score = 0
+
+# 靜態金幣的特效 (獨立處理)
+@target.bind("mousedown")
+def hit_coin(ev):
+    if game_active:
+        update_score(1)
+        target.style.transform = "scale(0)"
+        def reset_coin():
+            target.style.left = f"{random.randint(50, 540)}px"
+            target.style.top = f"{random.randint(50, 340)}px"
+            target.style.transform = "scale(1)"
+        timer.set_timeout(reset_coin, 300)
+    ev.stopPropagation()
+
+# 陷阱特效
+@trap.bind("mousedown")
+def hit_trap(ev):
+    if game_active:
+        update_score(-5)
+        trap.style.transform = "scale(1.5)"
+        timer.set_timeout(lambda: setattr(trap.style, 'transform', 'scale(1)'), 200)
+        game_area.style.backgroundColor = "#c0392b"
+        timer.set_timeout(lambda: setattr(game_area.style, 'backgroundColor', '#1a1a3a'), 100)
+    ev.stopPropagation()
+
+# 動態得分球事件
+def bind_ball_events():
+    for b in balls:
+        def make_handler(ball_data):
+            def handler(ev):
+                if game_active and ball_data["active"]:
+                    update_score(ball_data["pts"])
+                    disappear_effect(ball_data) # 觸發特效
+                ev.stopPropagation()
+            return handler
+        b["el"].bind("mousedown", make_handler(b))
+
+bind_ball_events()
+
+# --- 6. 遊戲控制 ---
+def check_time():
+    global game_active
+    rem = int(end_time - time.time())
+    if rem <= 0:
+        game_active = False
+        timer_display.text = "時間到！"
+        over = html.DIV(f"最終得分: {score}", style={
+            "position": "absolute", "top": "0", "left": "0", "width": "100%", "height": "100%",
+            "backgroundColor": "rgba(0,0,0,0.9)", "color": "white", "display": "flex",
+            "alignItems": "center", "justifyContent": "center", "fontSize": "2em", "zIndex": "100"
+        })
+        game_area <= over
+    else:
+        timer_display.text = f"⏳ 時間: {rem}s"
+        timer.set_timeout(check_time, 1000)
+
+def start_game():
+    global game_active, end_time, score
+    score = 0
+    game_active = True
+    end_time = time.time() + GAME_DURATION
+    move_all_balls()
+    # 讓陷阱自己跳動
+    def trap_jump():
+        if game_active:
+            trap.style.left = f"{random.randint(50, 540)}px"
+            trap.style.top = f"{random.randint(50, 340)}px"
+            timer.set_timeout(trap_jump, 1500)
+    trap_jump()
+    check_time()
+
+start_game()
